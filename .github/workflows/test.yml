@@ -1,0 +1,55 @@
+name: Test RTC Reward Action
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run in dry-run mode'
+        required: false
+        default: 'true'
+
+jobs:
+  test-dry-run:
+    name: Test Action (Dry Run)
+    runs-on: ubuntu-latest
+    # Run on merged PRs or manual dispatch
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run RTC Reward Action (dry-run)
+        uses: ./
+        with:
+          wallet-from: 'treasury-wallet-test-address-12345'
+          amount: '13'
+          dry-run: 'true'
+          node-url: 'https://node.rustchain.io'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lint:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate action.yml exists
+        run: test -f action.yml && echo "action.yml OK"
+
+      - name: Validate dist/index.js exists
+        run: test -f dist/index.js && echo "dist/index.js OK"
+
+      - name: Syntax check index.js
+        run: node --check index.js && echo "Syntax OK"

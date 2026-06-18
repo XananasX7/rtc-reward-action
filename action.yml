@@ -1,0 +1,44 @@
+name: 'RTC Reward Action'
+description: 'Automatically awards RTC tokens to contributors when their pull request is merged'
+author: 'XananasX7'
+
+branding:
+  icon: 'award'
+  color: 'orange'
+
+inputs:
+  node-url:
+    description: 'RustChain node URL for submitting transactions'
+    required: false
+    default: 'https://node.rustchain.io'
+  amount:
+    description: 'Amount of RTC to award per merged PR'
+    required: false
+    default: '10'
+  wallet-from:
+    description: 'Sender wallet address (treasury/admin wallet)'
+    required: true
+  admin-key:
+    description: 'Admin/treasury private key for signing transactions'
+    required: false
+    default: ''
+  dry-run:
+    description: 'If true, simulate the transaction without submitting to chain'
+    required: false
+    default: 'false'
+  wallet-file:
+    description: 'Path to .rtc-wallet file in the repository (used if PR body wallet not found)'
+    required: false
+    default: '.rtc-wallet'
+
+outputs:
+  tx-hash:
+    description: 'Transaction hash of the RTC transfer (empty in dry-run mode)'
+  recipient-wallet:
+    description: 'Recipient wallet address that received the RTC'
+  awarded-amount:
+    description: 'Amount of RTC awarded'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
