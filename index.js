@@ -57,28 +57,36 @@ function readWalletFromFile(walletFile) {
 
 /**
  * Submit an RTC transfer (or simulate in dry-run mode).
+ *
+ * Real endpoint contract (verified against https://rustchain.org):
+ *   POST /wallet/transfer
+ *   Header: X-Admin-Key: <adminKey>
+ *   Body:   { from_miner, to_miner, amount_rtc, idempotency_key }
+ *   200 OK: { ok: true, pending_id: "..." }
  */
-async function submitRTCTransfer({ nodeUrl, walletFrom, adminKey, recipientWallet, amount, dryRun }) {
+async function submitRTCTransfer({ nodeUrl, walletFrom, adminKey, recipientWallet, amount, dryRun, idempotencyKey }) {
   if (dryRun) {
     core.info(`[DRY RUN] Would transfer ${amount} RTC`);
     core.info(`[DRY RUN]   From:  ${walletFrom}`);
     core.info(`[DRY RUN]   To:    ${recipientWallet}`);
     core.info(`[DRY RUN]   Node:  ${nodeUrl}`);
-    return { success: true, txHash: null, dryRun: true };
+    return { success: true, txHash: null, pendingId: 'dry-run', dryRun: true };
   }
 
-  // Real transfer — POST to the RustChain node's transfer endpoint
   const fetch = require('node-fetch');
   const payload = {
-    from: walletFrom,
-    to: recipientWallet,
-    amount: parseFloat(amount),
-    key: adminKey,
+    from_miner: walletFrom,
+    to_miner: recipientWallet,
+    amount_rtc: parseFloat(amount),
+    idempotency_key: idempotencyKey,
   };
 
-  const response = await fetch(`${nodeUrl}/transfer`, {
+  const response = await fetch(`${nodeUrl}/wallet/transfer`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Key': adminKey,
+    },
     body: JSON.stringify(payload),
   });
 
@@ -88,13 +96,18 @@ async function submitRTCTransfer({ nodeUrl, walletFrom, adminKey, recipientWalle
   }
 
   const data = await response.json();
-  return { success: true, txHash: data.tx_hash || data.hash || '', dryRun: false };
+  return {
+    success: true,
+    txHash: data.tx_hash || data.hash || '',
+    pendingId: data.pending_id || '',
+    dryRun: false,
+  };
 }
 
 async function run() {
   try {
     // --- Read inputs ---
-    const nodeUrl    = core.getInput('node-url', { required: false }) || 'https://node.rustchain.io';
+    const nodeUrl    = core.getInput('node-url', { required: false }) || 'https://rustchain.org';
     const amount     = core.getInput('amount', { required: false }) || '10';
     const walletFrom = core.getInput('wallet-from', { required: true });
     const adminKey   = core.getInput('admin-key', { required: false }) || '';
@@ -123,6 +136,7 @@ async function run() {
     const prAuthor  = prPayload.user.login;
     const prTitle   = prPayload.title;
     const prBody    = prPayload.body || '';
+    const prUrl     = prPayload.html_url || '';
 
     core.info(`Processing merged PR #${prNumber}: "${prTitle}" by @${prAuthor}`);
 
@@ -175,6 +189,7 @@ async function run() {
       recipientWallet,
       amount,
       dryRun,
+      idempotencyKey: prUrl || `pr-${prNumber}`,
     });
 
     // --- Set outputs ---
@@ -189,7 +204,9 @@ async function run() {
       const dryRunNote = result.dryRun ? ' *(dry-run — no real transaction submitted)*' : '';
       const txLine = result.txHash
         ? `\n> 🔗 Transaction hash: \`${result.txHash}\``
-        : '';
+        : result.pendingId && !result.dryRun
+          ? `\n> 🕐 Pending ID: \`${result.pendingId}\``
+          : '';
 
       await octokit.rest.issues.createComment({
         ...context.repo,
