@@ -1,6 +1,9 @@
 /**
  * Unit tests for rtc-reward-action
  * Run with: node test/action.test.js
+ *
+ * Set RTC_LIVE_PROBE=1 to enable the network probe against rustchain.org.
+ * Without it, the live endpoint test is skipped (safe for air-gapped CI).
  */
 
 'use strict';
@@ -10,24 +13,35 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── async-aware test harness ──────────────────────────────────────────────────
 
-let passed = 0;
-let failed = 0;
+const tests = [];
 
 function test(name, fn) {
-  try {
-    fn();
-    console.log(`  ✅ ${name}`);
-    passed++;
-  } catch (err) {
-    console.error(`  ❌ ${name}`);
-    console.error(`     ${err.message}`);
-    failed++;
-  }
+  tests.push({ name, fn });
 }
 
-// ── inline the pure helpers from index.js so we can unit-test without side-effects ──
+async function run() {
+  let passed = 0;
+  let failed = 0;
+
+  for (const { name, fn } of tests) {
+    try {
+      await fn();
+      console.log(`  ✅ ${name}`);
+      passed++;
+    } catch (err) {
+      console.error(`  ❌ ${name}`);
+      console.error(`     ${err.message}`);
+      failed++;
+    }
+  }
+
+  console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
+  if (failed > 0) process.exit(1);
+}
+
+// ── inline the pure helpers from index.js ────────────────────────────────────
 
 const WALLET_PATTERNS = [
   /rtc[- ]wallet[:\s]+([a-zA-Z0-9_-]{20,})/i,
@@ -120,14 +134,16 @@ test('returns null when .rtc-wallet is all comments', () => {
   assert.strictEqual(wallet, null);
 });
 
-// ── /wallet/transfer endpoint (dry-run integration) ──────────────────────────
+// ── /wallet/transfer live endpoint probe (opt-in) ────────────────────────────
 
-console.log('\n/wallet/transfer endpoint (dry-run)');
+console.log('\n/wallet/transfer endpoint');
 
-test('POST /wallet/transfer returns Unauthorized with wrong key (confirms endpoint exists)', async () => {
-  // This is a live probe against the real node to confirm the contract shape.
-  // We intentionally use a bad key; a 401/Unauthorized response proves the endpoint
-  // is reachable and accepts our request format.
+test('POST /wallet/transfer rejects bad key with 401/403 (confirms endpoint contract)', async () => {
+  if (!process.env.RTC_LIVE_PROBE) {
+    console.log('     (skipped — set RTC_LIVE_PROBE=1 to enable)');
+    return;
+  }
+
   const https = require('https');
 
   await new Promise((resolve, reject) => {
@@ -148,12 +164,12 @@ test('POST /wallet/transfer returns Unauthorized with wrong key (confirms endpoi
           'Content-Length': Buffer.byteLength(body),
           'X-Admin-Key': 'invalid-test-key',
         },
+        timeout: 8000,
       },
       (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
-          // 401 Unauthorized = endpoint exists and validates key — correct contract
           assert.ok(
             res.statusCode === 401 || res.statusCode === 403,
             `Expected 401/403 from /wallet/transfer with bad key, got ${res.statusCode}: ${data}`
@@ -163,13 +179,13 @@ test('POST /wallet/transfer returns Unauthorized with wrong key (confirms endpoi
       }
     );
 
+    req.on('timeout', () => { req.destroy(new Error('request timed out')); });
     req.on('error', reject);
     req.write(body);
     req.end();
   });
 });
 
-// ── summary ───────────────────────────────────────────────────────────────────
+// ── run ───────────────────────────────────────────────────────────────────────
 
-console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+run();
